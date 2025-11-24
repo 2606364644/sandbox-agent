@@ -4,7 +4,7 @@ import os
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 
-from code_review_agent.utils.settings import settings
+from src.config.settings import settings
 
 
 # ANSI 颜色代码

@@ -4,7 +4,7 @@ from langchain_openai import ChatOpenAI
 
 from src.clients.base_client import BaseLLMProvider
 from src.utils.logger import log
-from config.settings import settings
+from config import settings
 
 
 class GlmProvider(BaseLLMProvider):
