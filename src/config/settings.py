@@ -11,7 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # os.path.dirname(...) -> D:\...\src\code_review_agent
 # os.path.dirname(...) -> D:\...\src
 # os.path.dirname(...) -> D:\... (项目根目录)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class Settings(BaseSettings):
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     """
     # .env文件路径配置
     model_config = SettingsConfigDict(
-        env_file=os.path.join(BASE_DIR, 'configs', '.env'),
+        env_file=os.path.join(BASE_DIR, '.env'),
         env_nested_delimiter="--",
         env_file_encoding='utf-8',
         # extra='ignore'  # 忽略.env文件中多余的字段
@@ -38,9 +38,9 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(description="日志级别", default="INFO")
 
     # 模型配置
-    API_BASE: str = Field(description="API Base URL", default="https://open.bigmodel.cn/api/paas/v4/")
-    API_KEY: str = Field(description="API Key", default="")
-    MODEL_NAME: str = Field(description="模型名称", default="glm-4-air")
+    API_BASE: str = Field(description="API Base URL", default="https://oneapi.sangfor.com/v1")
+    API_KEY: str = Field(description="API Key", default="...")
+    MODEL_NAME: str = Field(description="模型名称", default="glm45")
 
     # LLM 超时配置
     LLM_TIMEOUT: int = Field(description="LLM API 请求超时时间（秒）", default=300)  # 5分钟

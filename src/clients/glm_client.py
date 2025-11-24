@@ -4,7 +4,7 @@ from langchain_openai import ChatOpenAI
 
 from src.clients.base_client import BaseLLMProvider
 from src.utils.logger import log
-from config import settings
+from src.config.settings import settings
 
 
 class GlmProvider(BaseLLMProvider):
@@ -19,20 +19,20 @@ class GlmProvider(BaseLLMProvider):
         self.timeout = kwargs.get('timeout', settings.LLM_TIMEOUT)
 
     def validate_config(self) -> bool:
-        """验证GLM配置"""
+        """验证模型配置"""
         if not self.api_key:
-            log.error("GLM API Key未设置")
+            log.error("API Key未设置")
             return False
         if not self.api_base:
-            log.error("GLM API Base URL未设置")
+            log.error("API Base URL未设置")
             return False
         return True
 
     def create_client(self) -> ChatOpenAI:
         if not self.validate_config():
-            raise ValueError("GLM配置验证失败")
+            raise ValueError("模型配置验证失败")
 
-        log.info(f"初始化GLM客户端，模型: {self.model}, API Base: {self.api_base}")
+        log.info(f"初始化模型客户端，模型: {self.model}, API Base: {self.api_base}")
         return ChatOpenAI(
             model=self.model,
             api_key=self.api_key,
