@@ -3,10 +3,10 @@
 """
 from typing import List, Dict, Any, Optional, Union, Callable
 from abc import ABC, abstractmethod
-from langchain_core.agents import AgentExecutor
-from langchain_core.memory import BaseMemory
-from langchain_core.tools import BaseTool
-from langchain_core.messages import BaseMessage
+from langchain.agents import AgentExecutor
+from langchain.memory import BaseMemory
+from langchain.tools import BaseTool
+from langchain.messages import BaseMessage
 from src.models.llm_configs import create_llm, LLMProvider
 from src.memory.memory_manager import MemoryManager
 import logging

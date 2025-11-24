@@ -38,6 +38,7 @@ langchain-agent/
 │   │   ├── __init__.py
 │   │   ├── logger.py              # 日志工具
 │   │   └── helpers.py             # 辅助工具
+│   ├── simple_agent.py             # 简化版Agent（推荐新手使用）
 │   └── main.py             # 主入口文件
 ├── config/                 # 配置目录
 │   ├── __init__.py
@@ -45,7 +46,8 @@ langchain-agent/
 ├── examples/               # 示例代码
 │   ├── __init__.py
 │   ├── basic_agent.py      # 基础Agent示例
-│   └── advanced_agent.py   # 高级Agent示例
+│   ├── advanced_agent.py   # 高级Agent示例
+│   └── simple_agent_example.py   # 简化版Agent示例（推荐新手使用）
 ├── tests/                  # 测试代码
 │   ├── __init__.py
 │   ├── test_agents.py      # Agent测试
@@ -94,6 +96,12 @@ python examples/basic_agent.py
 python examples/advanced_agent.py
 ```
 
+### 5. 运行简化版Agent示例（推荐新手）
+
+```bash
+python examples/simple_agent_example.py
+```
+
 ## 📖 使用指南
 
 ### 创建Agent
@@ -114,6 +122,22 @@ framework = LangChainAgentFramework(
 # 运行查询
 result = framework.run_single_query("你好，请介绍一下自己")
 print(result['output'])
+```
+
+### 创建简化版Agent（推荐新手）
+
+```python
+from src.simple_agent import create_simple_agent
+
+# 创建简化版Agent
+agent = create_simple_agent(
+    model="gpt-3.5-turbo",
+    system_prompt="你是一个有帮助的AI助手。"
+)
+
+# 与Agent对话
+response = agent.chat("你好，介绍一下你自己")
+print(response)
 ```
 
 ### 交互模式
@@ -213,6 +237,12 @@ pytest tests/ -v
 ```bash
 pytest tests/test_agents.py -v
 pytest tests/test_tools.py -v
+```
+
+## 🧪 测试简化版Agent
+
+```bash
+python -m pytest tests/test_simple_agent.py -v
 ```
 
 ## 📊 配置选项
