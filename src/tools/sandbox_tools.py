@@ -19,7 +19,9 @@ from src.tools.common import (
     execute_command_core,
     get_system_info,
     check_directory_permissions,
-    validate_path_security
+    validate_path_security,
+    save_conversation_history,
+    load_conversation_history
 )
 
 
@@ -100,7 +102,7 @@ def write_to_file(file_path: str, content: str, create_dirs: bool = True) -> str
 
 @tool
 def search_files(directory: str, pattern: str, file_pattern: Optional[str] = None,
-                use_regex: bool = False, case_sensitive: bool = False) -> str:
+                 use_regex: bool = False, case_sensitive: bool = False) -> str:
     """
     在文件中搜索内容
 
@@ -119,8 +121,8 @@ def search_files(directory: str, pattern: str, file_pattern: Optional[str] = Non
 
 @tool
 def search_and_replace(file_path: str, search: str, replace: str,
-                      use_regex: bool = False, case_sensitive: bool = False,
-                      start_line: Optional[int] = None, end_line: Optional[int] = None) -> str:
+                       use_regex: bool = False, case_sensitive: bool = False,
+                       start_line: Optional[int] = None, end_line: Optional[int] = None) -> str:
     """
     在文件中搜索并替换内容
 
@@ -142,7 +144,7 @@ def search_and_replace(file_path: str, search: str, replace: str,
 # 代码分析工具
 @tool
 def codebase_search(query: str, directory: Optional[str] = None,
-                   file_types: Optional[str] = None) -> str:
+                    file_types: Optional[str] = None) -> str:
     """
     在代码库中搜索相关代码
 
@@ -178,7 +180,7 @@ def list_code_definitions(file_path: str) -> str:
 # 系统工具
 @tool
 def execute_command(command: str, cwd: Optional[str] = None,
-                   timeout: int = 300, max_output: int = 10000) -> str:
+                    timeout: int = 300, max_output: int = 10000) -> str:
     """
     执行系统命令
 
@@ -202,7 +204,9 @@ def get_system_info() -> str:
     Returns:
         系统信息字符串
     """
-    return get_system_info()
+    # 调用核心函数，避免递归
+    from src.tools.common import get_system_info as get_system_info_core
+    return get_system_info_core()
 
 
 @tool
@@ -216,7 +220,8 @@ def check_directory_permissions(directory: str) -> str:
     Returns:
         目录权限信息字符串
     """
-    return check_directory_permissions(directory)
+    from src.tools.common import check_directory_permissions as check_directory_permissions_core
+    return check_directory_permissions_core(directory)
 
 
 @tool
@@ -231,7 +236,8 @@ def validate_path_security(file_path: str, base_directory: Optional[str] = None)
     Returns:
         路径安全检查结果字符串
     """
-    return validate_path_security(file_path, base_directory)
+    from src.tools.common import validate_path_security as validate_path_security_core
+    return validate_path_security_core(file_path, base_directory)
 
 @tool
 def calculate(expression: str) -> str:
@@ -266,6 +272,44 @@ def get_weather(city: str) -> str:
     return f"{city}的天气是晴朗，温度25°C。"
 
 
+# 对话历史工具
+@tool
+def save_conversation(conversation_data: str, log_file: Optional[str] = None) -> str:
+    """
+    保存对话历史到日志文件
+
+    Args:
+        conversation_data: 对话数据（JSON格式的字符串）
+        log_file: 日志文件路径（可选，默认为 conversation_history.jsonl）
+
+    Returns:
+        操作结果字符串
+    """
+    try:
+        import json
+        conversation = json.loads(conversation_data)
+        return save_conversation_history(conversation, log_file)
+    except json.JSONDecodeError:
+        return "错误：对话数据格式无效，请提供有效的JSON格式字符串"
+    except Exception as e:
+        return f"保存对话历史时发生错误：{str(e)}"
+
+
+@tool
+def load_conversation(log_file: Optional[str] = None, limit: int = 10) -> str:
+    """
+    加载最近的对话历史
+
+    Args:
+        log_file: 日志文件路径（可选，默认为 conversation_history.jsonl）
+        limit: 加载的条目数量（默认为10）
+
+    Returns:
+        对话历史内容字符串
+    """
+    return load_conversation_history(log_file, limit)
+
+
 # 工具列表，便于注册到agent中
 TOOLS = [
     read_file,
@@ -279,7 +323,9 @@ TOOLS = [
     execute_command,
     get_system_info,
     check_directory_permissions,
-    validate_path_security
+    validate_path_security,
+    save_conversation,
+    load_conversation
 ]
 
 

@@ -1,3 +1,4 @@
+import asyncio
 from typing import List, Dict
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
@@ -82,6 +83,8 @@ class SandboxAgent:
 
         # 组装prompt
         formatted_prompt = self.user_prompt.invoke({
+            "code_repo": message.code_repo,
+            "poc_path": message.poc_path,
             "type": message.type,
             "description": message.description,
             "filename": message.filename,
@@ -122,9 +125,11 @@ class SandboxAgent:
 
 
 # 使用示例
-if __name__ == "__main__":
+async def main():
     # 测试结果
     vuln_result = VulnResult(
+        code_repo="D:\\Project\\AF\\AF8.0.40",
+        poc_path="./poc",
         type="FORMAT_STRING_VULNERABILITY",
         description="代码第1387行使用output.Eval函数将未经转义的path.c_str()作为格式化字符串参数传递。若path的值包含格式化字符串特殊字符（如%n），可能触发内存写入漏洞。触发点函数为Eval，受污染变量为path，其来源为pGrp->pPath，而pGrp通过用户输入的nCrc获取，存在潜在用户控制路径。",
         filename="af/business/user_auth/cgi/AcOrg/AcOrgCgi.cpp",
@@ -242,3 +247,7 @@ SanitizeFormatString(pGrp->pPath); // 移除%n等危险字符
     # print("\n=== 对话历史 ===")
     # for msg in agent.get_history():
     #     print(f"{msg['role']}: {msg['content']}")
+
+if __name__ == "__main__":
+    log.info(f"Start...")
+    asyncio.run(main())

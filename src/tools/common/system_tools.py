@@ -8,8 +8,10 @@ import subprocess
 import shlex
 import time
 import signal
+import json
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
+from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
@@ -357,3 +359,106 @@ def validate_path_security(file_path: str, base_directory: Optional[str] = None)
 
     except Exception as e:
         return f"路径安全检查失败: {str(e)}"
+
+
+def save_conversation_history(conversation: List[Dict[str, Any]],
+                            log_file: Optional[str] = None) -> str:
+    """
+    保存对话历史到日志文件
+
+    Args:
+        conversation: 对话历史列表
+        log_file: 日志文件路径（可选）
+
+    Returns:
+        操作结果
+    """
+    try:
+        if log_file is None:
+            log_file = "conversation_history.jsonl"
+
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 添加时间戳
+        timestamp = datetime.now().isoformat()
+
+        # 准备日志条目
+        log_entry = {
+            "timestamp": timestamp,
+            "conversation": conversation
+        }
+
+        # 追加到日志文件
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+
+        logger.info(f"对话历史已保存到 {log_file}，时间戳: {timestamp}")
+        return f"成功保存对话历史到 {log_file}（时间戳：{timestamp}）"
+
+    except Exception as e:
+        error_msg = f"保存对话历史时发生错误：{str(e)}"
+        logger.error(error_msg)
+        return error_msg
+
+
+def load_conversation_history(log_file: Optional[str] = None,
+                            limit: int = 10) -> str:
+    """
+    加载最近的对话历史
+
+    Args:
+        log_file: 日志文件路径（可选）
+        limit: 加载的条目数量
+
+    Returns:
+        对话历史内容
+    """
+    try:
+        if log_file is None:
+            log_file = "conversation_history.jsonl"
+
+        log_path = Path(log_file)
+        if not log_path.exists():
+            return f"对话历史文件 {log_file} 不存在"
+
+        # 读取最后几行
+        lines = []
+        with open(log_path, 'r', encoding='utf-8') as f:
+            all_lines = f.readlines()
+            lines = all_lines[-limit:] if len(all_lines) > limit else all_lines
+
+        if not lines:
+            return f"对话历史文件 {log_file} 为空"
+
+        result = f"最近 {len(lines)} 条对话历史：\n\n"
+
+        for i, line in enumerate(lines, 1):
+            try:
+                entry = json.loads(line.strip())
+                timestamp = entry.get('timestamp', '未知时间')
+                conversation = entry.get('conversation', [])
+
+                result += f"{'='*60}\n"
+                result += f"对话 #{i} - 时间: {timestamp}\n"
+                result += f"{'='*60}\n\n"
+
+                for msg in conversation:
+                    role = msg.get('role', '未知')
+                    content = msg.get('content', '')
+
+                    result += f"[{role.upper()}]: {content[:200]}"
+                    if len(content) > 200:
+                        result += "..."
+                    result += "\n\n"
+
+            except json.JSONDecodeError:
+                result += f"第 {i} 条记录格式错误\n\n"
+
+        logger.info(f"成功加载 {len(lines)} 条对话历史")
+        return result
+
+    except Exception as e:
+        error_msg = f"加载对话历史时发生错误：{str(e)}"
+        logger.error(error_msg)
+        return error_msg
