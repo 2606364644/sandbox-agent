@@ -11,7 +11,7 @@ class GlmProvider(BaseLLMProvider):
     """适配公司本地大模型"""
 
     def __init__(self, model: Optional[str] = None, **kwargs):
-        self.model = model or settings.MODEL_NAEM
+        self.model = model or settings.MODEL_NAME
         self.api_key = kwargs.get('api_key') or settings.API_KEY
         self.api_base = kwargs.get('api_base') or settings.API_BASE
         self.temperature = kwargs.get('temperature', settings.LLM_TEMPERATURE)
