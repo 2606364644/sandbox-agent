@@ -38,9 +38,9 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(description="日志级别", default="INFO")
 
     # 模型配置
-    API_BASE: str = Field(description="API Base URL", default="https://oneapi.sangfor.com/v1")
-    API_KEY: str = Field(description="API Key", default="...")
-    MODEL_NAME: str = Field(description="模型名称", default="glm45")
+    API_BASE: str = Field(description="API Base URL")
+    API_KEY: str = Field(description="API Key")
+    MODEL_NAME: str = Field(description="模型名称")
 
     # LLM 超时配置
     LLM_TIMEOUT: int = Field(description="LLM API 请求超时时间（秒）", default=300)  # 5分钟
