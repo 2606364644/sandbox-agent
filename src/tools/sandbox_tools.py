@@ -17,12 +17,8 @@ from src.tools.common import (
     codebase_search_core,
     list_code_definitions_core,
     execute_command_core,
-    get_system_info,
-    check_directory_permissions,
-    validate_path_security,
-    save_conversation_history,
-    load_conversation_history
 )
+from src.tools.common.system_tools import load_conversation_history, save_conversation_history
 
 
 # 文件操作工具
@@ -329,10 +325,19 @@ TOOLS = [
 ]
 
 
-# 沙箱工具列表
-SANDBOX_TOOLS = [
+# Poc工具列表
+POC_AGENT_TOOLS = [
     read_file,
     list_files,
     write_to_file,
     search_files,
 ]
+
+
+# 沙箱工具列表
+SANDBOX_TOOLS = [
+    read_file,
+    list_files,
+    execute_command,
+]
+

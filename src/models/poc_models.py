@@ -1,0 +1,18 @@
+from pydantic import BaseModel, Field
+
+
+class ToDoListResult(BaseModel):
+    todolist: str = Field(..., description="你同事规划的todolist")
+    code_repo: str = Field(..., description="代码仓库路径")
+    poc_path: str = Field(..., description="生成poc路径")
+    type: str = Field(..., description="漏洞类型")
+    description: str = Field(..., description="漏洞描述")
+    filename: str = Field(..., description="漏洞触发点路径")
+    code: str = Field(..., description="漏洞触发点")
+    impact: str = Field(..., description="漏洞影响")
+    result: str = Field(..., description="漏洞报告")
+
+
+class PocResult(BaseModel):
+    result: str = Field(..., description="你的执行过程和结果，包含你执行了哪些ToDoList步骤，调用了什么工具，最终结果是什么")
+    poc_code: str = Field(..., description="验证代码")

@@ -1,17 +1,13 @@
 from pydantic import BaseModel, Field
 
 
-class VulnResult(BaseModel):
-    code_repo: str = Field(..., description="代码仓库路径")
-    poc_path: str = Field(..., description="生成poc路径")
+class PocCode(BaseModel):
+    poc_path: str = Field(..., description="poc路径")
+    poc_info: str = Field(..., description="poc代码详细介绍")
     type: str = Field(..., description="漏洞类型")
     description: str = Field(..., description="漏洞描述")
-    filename: str = Field(..., description="漏洞触发点路径")
-    code: str = Field(..., description="漏洞触发点")
     impact: str = Field(..., description="漏洞影响")
-    result: str = Field(..., description="漏洞报告")
 
 
 class SandboxResult(BaseModel):
-    result: str = Field(..., description="你的执行过程和结果，包含你做的ToDoList，调用了什么工具，执行了哪些步骤，最终结果")
-    poc_code: str = Field(..., description="验证代码")
+    result: str = Field(..., description="PoC的执行结果，以及你对结果的分析过程和结论")

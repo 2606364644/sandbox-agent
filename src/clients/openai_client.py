@@ -7,7 +7,7 @@ from src.utils.logger import log
 from src.config.settings import settings
 
 
-class GlmProvider(BaseLLMProvider):
+class OpenAIProvider(BaseLLMProvider):
     """适配公司本地大模型"""
 
     def __init__(self, model: Optional[str] = None, **kwargs):
@@ -40,5 +40,6 @@ class GlmProvider(BaseLLMProvider):
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             timeout=self.timeout,
-            max_retries=settings.LLM_MAX_RETRIES
+            max_retries=settings.LLM_MAX_RETRIES,
+            use_responses_api=True, # 开启深度思考
         )
