@@ -54,8 +54,11 @@ class Settings(BaseSettings):
 
     # LLM 基础配置
     LLM_TEMPERATURE: float = Field(description="LLM 温度参数", default=0.0)
-    LLM_MAX_TOKENS: Optional[int] = Field(description="LLM 最大输出token数", default=None)
-    LLM_TOP_P: Optional[float] = Field(description="LLM top_p参数", default=None)
+    LLM_MAX_TOKENS: Optional[int] = Field(description="LLM 最大输出token数", default=0)
+    LLM_TOP_P: Optional[float] = Field(description="LLM top_p参数", default=0)
+
+    # LLM 思考功能配置
+    THINK: Optional[bool] = Field(description="是否启用思考功能（深度思考模式）", default=True)
 
 
 @lru_cache

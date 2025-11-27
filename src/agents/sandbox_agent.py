@@ -11,10 +11,10 @@ from langchain.agents.middleware import (
 from langchain.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.tools import BaseTool
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAI
 
 from src.agents.base_agent import BaseAgent
-from src.clients.openai_client import OpenAIProvider
+from src.clients import get_llm_client, get_llm_provider
 from src.models.sandbox_models import PocCode, SandboxResult
 from src.prompt.sandbox_prompt import SYSTEM_PROMPT, USER_PROMPT
 from src.tools.sandbox_tools import SANDBOX_TOOLS
@@ -27,7 +27,7 @@ class SandboxAgent(BaseAgent):
     def __init__(
             self,
             workspace_root: str = None,
-            model: ChatOpenAI = None,
+            model: ChatOpenAI | OpenAI = None,
             tool: List[BaseTool] = SANDBOX_TOOLS,
     ):
         super().__init__()
@@ -49,9 +49,6 @@ class SandboxAgent(BaseAgent):
             ],
             # response_format=ToolStrategy(SandboxResult),
         )
-
-        # 对话历史
-        self.chat_history = []
 
         # user prompt
         self.user_prompt = ChatPromptTemplate.from_template(
@@ -81,20 +78,6 @@ class SandboxAgent(BaseAgent):
 
         return reply
 
-    def get_history(self) -> List[Dict[str, str]]:
-        """获取对话历史"""
-        history = []
-        for msg in self.chat_history:
-            if isinstance(msg, HumanMessage):
-                history.append({"role": "user", "content": msg.content})
-            elif isinstance(msg, AIMessage):
-                history.append({"role": "assistant", "content": msg.content})
-        return history
-
-    def clear_history(self):
-        """清空对话历史"""
-        self.chat_history = []
-
 
 # 使用示例
 async def main():
@@ -108,7 +91,8 @@ async def main():
         impact="攻击者可以通过构造包含格式化说明符的输入，导致程序读取或写入任意内存地址，可能造成敏感信息泄露或拒绝服务攻击。",
     )
 
-    model = OpenAIProvider().create_client()
+    # 使用抽象层自动选择客户端
+    model = get_llm_client()
     model.with_structured_output(SandboxResult)
 
     agent = SandboxAgent(workspace_root=poc_path, model=model)

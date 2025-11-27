@@ -8,10 +8,11 @@ from langchain.agents.middleware import FilesystemFileSearchMiddleware, Summariz
 from langchain.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.tools import BaseTool
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAI
+
 
 from src.agents.base_agent import BaseAgent
-from src.clients.openai_client import OpenAIProvider
+from src.clients import get_llm_client, get_llm_provider
 from src.models.poc_models import ToDoListResult, PocResult
 from src.prompt.poc_prompt import SYSTEM_PROMPT, USER_PROMPT
 from src.tools.sandbox_tools import POC_AGENT_TOOLS
@@ -24,7 +25,7 @@ class PocGenAgent(BaseAgent):
     def __init__(
             self,
             search_file_path: str = None,
-            model: ChatOpenAI = None,
+            model: ChatOpenAI | OpenAI = None,
             tool: List[BaseTool] = POC_AGENT_TOOLS,
     ):
         super().__init__()
@@ -38,7 +39,6 @@ class PocGenAgent(BaseAgent):
             model=self.model,
             tools=self.tools,
             system_prompt=self.system_prompt,
-            # response_format=ToolStrategy(SandboxResult)
         )
 
         # user prompt
@@ -50,17 +50,7 @@ class PocGenAgent(BaseAgent):
     async def achat(self, message: ToDoListResult) -> str:
 
         # 组装prompt
-        formatted_prompt = self.user_prompt.invoke({
-            "todolist": message.todolist,
-            "code_repo": message.code_repo,
-            "poc_path": message.poc_path,
-            "type": message.type,
-            "description": message.description,
-            "filename": message.filename,
-            "code": message.code,
-            "impact": message.impact,
-            "result": message.result
-        })
+        formatted_prompt = self.user_prompt.invoke(message.model_dump())
 
         # 添加用户消息到历史记录
         self.chat_history.append(HumanMessage(content=str(formatted_prompt)))
@@ -78,20 +68,6 @@ class PocGenAgent(BaseAgent):
         self.chat_history.append(ai_message)
 
         return reply
-
-    def get_history(self) -> List[Dict[str, str]]:
-        """获取对话历史"""
-        history = []
-        for msg in self.chat_history:
-            if isinstance(msg, HumanMessage):
-                history.append({"role": "user", "content": msg.content})
-            elif isinstance(msg, AIMessage):
-                history.append({"role": "assistant", "content": msg.content})
-        return history
-
-    def clear_history(self):
-        """清空对话历史"""
-        self.chat_history = []
 
 
 # 使用示例
@@ -242,7 +218,8 @@ void AFX_CDECL CString::Format(LPCTSTR lpszFormat, ...)
         """.strip()
     )
 
-    model = OpenAIProvider().create_client()
+    # 使用抽象层自动选择客户端
+    model = get_llm_client()
     model.with_structured_output(PocResult)
 
     agent = PocGenAgent(search_file_path=vuln_result.code_repo, model=model)

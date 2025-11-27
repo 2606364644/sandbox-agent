@@ -3,7 +3,9 @@
     "allow": [
       "WebFetch(domain:docs.langchain.com)",
       "WebSearch",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "mcp__tavily__tavily_search",
+      "mcp__tavily__tavily_extract"
     ],
     "deny": [],
     "ask": []

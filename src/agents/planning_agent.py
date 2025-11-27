@@ -8,12 +8,11 @@ from langchain.agents.middleware import FilesystemFileSearchMiddleware, Summariz
 from langchain.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.tools import BaseTool
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAI
 
 from src.agents.base_agent import BaseAgent
-from src.clients.openai_client import OpenAIProvider
-from src.models.planning_models import PlanningResult
-from src.models.sandbox_models import VulnResult
+from src.clients import get_llm_client, get_llm_provider
+from src.models.planning_models import VulnResult, PlanningResult
 from src.prompt.planning_prompt import SYSTEM_PROMPT, USER_PROMPT
 from src.tools.sandbox_tools import POC_AGENT_TOOLS
 from src.utils.logger import log
@@ -21,12 +20,11 @@ from src.tools.common.system_tools import save_conversation_history
 
 
 class PlanningAgent(BaseAgent):
-    """沙箱执行Agent类"""
 
     def __init__(
             self,
             search_file_path: str = None,
-            model: ChatOpenAI = None,
+            model: ChatOpenAI | OpenAI = None,
             tool: List[BaseTool] = POC_AGENT_TOOLS,
     ):
         super().__init__()
@@ -94,16 +92,7 @@ class PlanningAgent(BaseAgent):
     async def achat(self, message: VulnResult) -> str:
 
         # 组装prompt
-        formatted_prompt = self.user_prompt.invoke({
-            "code_repo": message.code_repo,
-            "poc_path": message.poc_path,
-            "type": message.type,
-            "description": message.description,
-            "filename": message.filename,
-            "code": message.code,
-            "impact": message.impact,
-            "result": message.result
-        })
+        formatted_prompt = self.user_prompt.invoke(message.model_dump())
 
         # 添加用户消息到历史记录
         self.chat_history.append(HumanMessage(content=str(formatted_prompt)))
@@ -273,7 +262,7 @@ void AFX_CDECL CString::Format(LPCTSTR lpszFormat, ...)
         """.strip()
     )
 
-    model = OpenAIProvider().create_client()
+    model = get_llm_client()
     model.with_structured_output(PlanningResult)
 
     agent = PlanningAgent(search_file_path=vuln_result.code_repo, model=model)

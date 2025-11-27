@@ -30,12 +30,12 @@ class OpenAIProvider(BaseLLMProvider):
             return False
         return True
 
-    def create_client(self) -> OpenAI:
+    def create_client(self) -> BaseChatOpenAI:
         if not self.validate_config():
             raise ValueError("模型配置验证失败")
 
         log.info(f"初始化模型客户端，模型: {self.model}, API Base: {self.api_base}")
-        return OpenAI(
+        return BaseChatOpenAI(
             model=self.model,
             api_key=self.api_key,
             base_url=self.api_base,
@@ -43,4 +43,5 @@ class OpenAIProvider(BaseLLMProvider):
             max_tokens=self.max_tokens,
             timeout=self.timeout,
             max_retries=settings.LLM_MAX_RETRIES,
+            use_responses_api=settings.THINK,  # 从配置读取思考功能
         )

@@ -2,7 +2,6 @@ from typing import Optional
 
 from langchain.chat_models import init_chat_model
 from langchain_openai import ChatOpenAI, OpenAI
-from langchain_openai.chat_models.base import BaseChatOpenAI
 
 from src.clients.base_client import BaseLLMProvider
 from src.utils.logger import log
@@ -30,12 +29,12 @@ class OpenAIProvider(BaseLLMProvider):
             return False
         return True
 
-    def create_client(self) -> OpenAI:
+    def create_client(self) -> ChatOpenAI:
         if not self.validate_config():
             raise ValueError("模型配置验证失败")
 
         log.info(f"初始化模型客户端，模型: {self.model}, API Base: {self.api_base}")
-        return OpenAI(
+        return ChatOpenAI(
             model=self.model,
             api_key=self.api_key,
             base_url=self.api_base,
@@ -43,4 +42,5 @@ class OpenAIProvider(BaseLLMProvider):
             max_tokens=self.max_tokens,
             timeout=self.timeout,
             max_retries=settings.LLM_MAX_RETRIES,
+            use_responses_api=settings.THINK,  # 从配置读取思考功能
         )
