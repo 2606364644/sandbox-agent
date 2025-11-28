@@ -5,7 +5,8 @@
       "WebSearch",
       "Bash(mkdir:*)",
       "mcp__tavily__tavily_search",
-      "mcp__tavily__tavily_extract"
+      "mcp__tavily__tavily_extract",
+      "mcp__web-search-prime__webSearchPrime"
     ],
     "deny": [],
     "ask": []

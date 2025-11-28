@@ -19,6 +19,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from src.core.workflow import Workflow
+from src.core.simple_workflow import SimpleWorkflow
 from src.utils.logger import log
 
 
@@ -55,7 +56,7 @@ def read_vulnerabilities(excel_path: str, code_repo: str) -> List[Dict[str, Any]
         raise
 
 
-async def process_vulnerability(workflow: Workflow, vuln: Dict[str, Any]) -> Dict[str, Any]:
+async def process_vulnerability(workflow, vuln: Dict[str, Any]) -> Dict[str, Any]:
     """处理单个漏洞"""
     start_time = time.time()
     log.info(f"开始处理漏洞: {vuln['id']} - {vuln['vulnerability_type']} - {vuln['filename']}")
@@ -106,7 +107,7 @@ async def process_vulnerability(workflow: Workflow, vuln: Dict[str, Any]) -> Dic
         }
 
 
-async def process_vulnerabilities(workflow: Workflow, vulnerabilities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def process_vulnerabilities(workflow, vulnerabilities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """批量处理漏洞 - 支持并发和进度条"""
     total_count = len(vulnerabilities)
     log.info(f"输入: 开始批量处理 {total_count} 个漏洞")
@@ -229,6 +230,19 @@ def export_results(results: List[Dict[str, Any]], output_dir: str = "./results")
         raise
 
 
+def create_workflow(workflow_type: str, max_retries: int = 3):
+    """创建工作流实例"""
+    if workflow_type.lower() == 'simple':
+        log.info(f"创建简化工作流 (无重试机制)")
+        return SimpleWorkflow()
+    elif workflow_type.lower() == 'original':
+        log.info(f"创建原始工作流 (最大重试次数: {max_retries})")
+        return Workflow(max_retries=max_retries)
+    else:
+        log.error(f"不支持的工作流类型: {workflow_type}，支持: simple, original")
+        raise ValueError(f"不支持的工作流类型: {workflow_type}")
+
+
 def parse_arguments():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
@@ -236,11 +250,13 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
-  python main.py                                    # 使用默认参数
+  python main.py                                    # 使用默认参数和简化工作流
   python main.py -e data.xlsx                      # 指定Excel文件
   python main.py -c /path/to/repo                  # 指定代码仓库
   python main.py -e data.xlsx -c /path/to/repo     # 指定Excel文件和代码仓库
-  python main.py -e data.xlsx -i 5                 # 指定Excel文件和最大迭代次数
+  python main.py -w simple                        # 使用简化工作流
+  python main.py -w original                       # 使用原始工作流
+  python main.py -w original -i 5                 # 使用原始工作流并设置最大重试次数
         """
     )
 
@@ -262,7 +278,7 @@ def parse_arguments():
         '-i', '--iterations',
         type=int,
         default=3,
-        help='最大迭代次数 (默认: 3)'
+        help='最大重试次数，仅用于原始工作流 (默认: 3)'
     )
 
     parser.add_argument(
@@ -270,6 +286,14 @@ def parse_arguments():
         type=str,
         default='./outputs',
         help='结果输出目录 (默认: ./outputs)'
+    )
+
+    parser.add_argument(
+        '-w', '--workflow',
+        type=str,
+        choices=['simple', 'original'],
+        default='simple',
+        help='工作流类型: simple(简化无重试), original(原始有重试) (默认: simple)'
     )
 
     return parser.parse_args()
@@ -281,7 +305,10 @@ async def main():
     args = parse_arguments()
 
     log.info("启动沙箱Agent主程序")
-    log.info(f"配置参数 - Excel文件: {args.excel}, 代码仓库: {args.code_repo}, 最大迭代次数: {args.iterations}, 输出目录: {args.output}")
+    log.info(f"配置参数 - Excel文件: {args.excel}, 代码仓库: {args.code_repo}, 工作流类型: {args.workflow}, 输出目录: {args.output}")
+
+    if args.workflow == 'original':
+        log.info(f"最大重试次数: {args.iterations}")
 
     try:
         # 第一步：读取Excel数据
@@ -292,9 +319,9 @@ async def main():
             log.error("Excel文件中没有找到有效的漏洞数据")
             return
 
-        # 第二步：处理漏洞数据
-        log.info("步骤2: 执行PoC生成工作流")
-        workflow = Workflow(max_retries=args.iterations)
+        # 第二步：创建并执行工作流
+        log.info("步骤2: 创建工作流并执行PoC生成")
+        workflow = create_workflow(args.workflow, args.iterations)
         results = await process_vulnerabilities(workflow, vulnerabilities)
 
         # 第三步：导出结果
@@ -312,6 +339,7 @@ async def main():
         log.info(f"  成功率: {successful_count/total_count*100:.1f}%")
         log.info(f"  详细结果文件: {excel_result_path}")
         log.info(f"  摘要报告文件: {summary_path}")
+        log.info(f"  使用的工作流: {args.workflow}")
 
         log.info("程序执行完成")
 

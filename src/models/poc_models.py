@@ -15,4 +15,3 @@ class ToDoListResult(BaseModel):
 
 class PocResult(BaseModel):
     result: str = Field(..., description="你的执行过程和结果，包含你执行了哪些ToDoList步骤，调用了什么工具，最终结果是什么")
-    poc_code: str = Field(..., description="验证代码")

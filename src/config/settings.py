@@ -43,22 +43,22 @@ class Settings(BaseSettings):
     MODEL_NAME: str = Field(description="模型名称")
 
     # LLM 超时配置
-    LLM_TIMEOUT: int = Field(description="LLM API 请求超时时间（秒）", default=300)  # 5分钟
+    LLM_TIMEOUT: int = Field(description="LLM API 请求超时时间（秒）", default=800)  # 5分钟
 
     # LLM 重试配置
-    LLM_MAX_RETRIES: int = Field(description="LLM API 请求最大重试次数", default=3)
+    LLM_MAX_RETRIES: int = Field(description="LLM API 请求最大重试次数", default=1)
     LLM_RETRY_DELAY: float = Field(description="LLM API 请求重试延迟时间（秒）", default=1.0)
-    LLM_RETRY_MAX_DELAY: float = Field(description="LLM API 请求重试最大延迟时间（秒）", default=30.0)
+    LLM_RETRY_MAX_DELAY: float = Field(description="LLM API 请求重试最大延迟时间（秒）", default=5.0)
     LLM_RETRY_EXP_BASE: float = Field(description="LLM API 请求重试指数退避基础", default=2.0)
     LLM_RETRY_JITTER: float = Field(description="LLM API 请求重试抖动系数", default=0.1)
 
     # LLM 基础配置
     LLM_TEMPERATURE: float = Field(description="LLM 温度参数", default=0.0)
-    LLM_MAX_TOKENS: Optional[int] = Field(description="LLM 最大输出token数", default=0)
-    LLM_TOP_P: Optional[float] = Field(description="LLM top_p参数", default=0)
+    LLM_MAX_TOKENS: int = Field(description="LLM 最大输出token数", default=0)
+    LLM_TOP_P: float = Field(description="LLM top_p参数", default=0)
 
     # LLM 思考功能配置
-    THINK: Optional[bool] = Field(description="是否启用思考功能（深度思考模式）", default=True)
+    THINK: bool = Field(description="是否启用思考功能（深度思考模式）", default=True)
 
 
 @lru_cache
