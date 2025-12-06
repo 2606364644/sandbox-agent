@@ -1,469 +1,419 @@
-"""
-基于DeepAgent理念的PoC生成代理
-将复杂的PoC生成任务分解为多个专业化子任务，提高成功率和可维护性
-"""
-
 import asyncio
 import os
-import json
 from datetime import datetime
-from typing import List, Dict, Optional, Any
-from dataclasses import dataclass
-from enum import Enum
-
-from langchain.agents import create_agent
+from typing import List, Dict
+from deepagents import create_deep_agent
+from deepagents.backends import FilesystemBackend
 from langchain.agents.structured_output import ToolStrategy
-from langchain_core.prompts import ChatPromptTemplate
+from langchain.agents.middleware import FilesystemFileSearchMiddleware, SummarizationMiddleware
+from langchain.messages import HumanMessage, AIMessage
+from langchain_core.prompts import PromptTemplate
 from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI, OpenAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
+from src.models.planning_models import VulnResult
 from src.agents.base_agent import BaseAgent
-from src.clients import get_llm_client
+from src.clients import get_llm_client, get_llm_provider
 from src.models.poc_models import ToDoListResult, PocResult
+from src.prompt.pocgen_deepagent_prompt import SYSTEM_PROMPT, USER_PROMPT
 from src.tools.sandbox_tools import POC_AGENT_TOOLS
 from src.utils.logger import log
+from src.tools.common.system_tools import save_conversation_history
 
 
-class TaskStage(Enum):
-    """任务阶段枚举"""
-    PLANNING = "planning"
-    ANALYSIS = "analysis"
-    CODING = "coding"
-    TESTING = "testing"
-    DOCUMENTATION = "documentation"
-    REVIEW = "review"
+class PocGenDeepAgent(BaseAgent):
 
+    def __init__(
+            self,
+            search_file_path: str = None,
+            model: ChatOpenAI | OpenAI = None,
+            tool: List[BaseTool] = POC_AGENT_TOOLS,
+    ):
+        super().__init__()
 
-@dataclass
-class TaskContext:
-    """任务上下文，存储各阶段的结果"""
-    stage: TaskStage
-    vulnerability_info: ToDoListResult
-    working_directory: str
-    generated_files: List[str]
-    analysis_result: Optional[str] = None
-    code_result: Optional[str] = None
-    test_result: Optional[str] = None
-    doc_result: Optional[str] = None
-    review_result: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为字典格式，便于传递给子代理"""
-        return {
-            "stage": self.stage.value,
-            "vulnerability_info": self.vulnerability_info.model_dump(),
-            "working_directory": self.working_directory,
-            "generated_files": self.generated_files,
-            "analysis_result": self.analysis_result,
-            "code_result": self.code_result,
-            "test_result": self.test_result,
-            "doc_result": self.doc_result,
-            "review_result": self.review_result
-        }
-
-
-class SubAgent:
-    """子代理基类"""
-
-    def __init__(self, name: str, model: ChatOpenAI | OpenAI, tools: List[BaseTool],
-                 system_prompt: str, tools_prompt: str = ""):
-        self.name = name
         self.model = model
-        self.tools = tools
-        self.system_prompt = system_prompt
-        self.tools_prompt = tools_prompt
+        self.tools = tool
+        self.system_prompt = SYSTEM_PROMPT
 
-        # 创建LangChain代理
-        self.agent = create_agent(
-            model=model,
-            tools=tools,
-            system_prompt=system_prompt + tools_prompt
+        # 创建Agent
+        self.agent = create_deep_agent(
+            model=self.model,
+            system_prompt=self.system_prompt,
+            # backend=FilesystemBackend(root_dir="/codesec", virtual_mode=True),
+            backend=FilesystemBackend(root_dir="/codesec"),
         )
 
-    async def execute(self, context: Dict[str, Any], task_description: str) -> str:
-        """执行子代理任务"""
-        try:
-            # 构造用户输入
-            user_input = f"""
-任务描述: {task_description}
+        # user prompt
+        self.user_prompt = PromptTemplate.from_template(
+            USER_PROMPT,
+            template_format="jinja2"
+        ).partial()
 
-当前上下文:
-{json.dumps(context, indent=2, ensure_ascii=False)}
+    async def achat(self, message: ToDoListResult) -> str:
 
-请根据你的专业能力完成上述任务。返回详细的结果。
-"""
-
-            # 调用代理
-            response = await self.agent.ainvoke({
-                "messages": [{"role": "user", "content": user_input}]
-            })
-
-            # 提取回复内容
-            ai_message = response["messages"][-1]
-            return ai_message.content
-
-        except Exception as e:
-            log.error(f"子代理 {self.name} 执行失败: {str(e)}")
-            return f"执行失败: {str(e)}"
-
-
-class PlanningAgent(SubAgent):
-    """规划阶段代理 - 分解复杂任务"""
-
-    def __init__(self, model: ChatOpenAI | OpenAI, tools: List[BaseTool]):
-        system_prompt = """
-你是一个专业的PoC任务规划专家。你的职责是将复杂的漏洞验证任务分解为清晰、可执行的子任务列表。
-
-你需要分析漏洞信息并制定详细的执行计划，包括：
-1. 代码分析任务
-2. PoC代码编写任务
-3. 测试验证任务
-4. 文档编写任务
-
-输出格式应该是一个结构化的JSON，包含各阶段的具体任务。
-"""
-        tools_prompt = f"""
-可用工具:
-{chr(10).join([f"- {tool.name}: {tool.description}" for tool in tools])}
-
-请使用这些工具来分析漏洞信息和环境。
-"""
-        super().__init__("PlanningAgent", model, tools, system_prompt, tools_prompt)
-
-
-class AnalysisAgent(SubAgent):
-    """分析阶段代理 - 深入分析漏洞"""
-
-    def __init__(self, model: ChatOpenAI | OpenAI, tools: List[BaseTool]):
-        system_prompt = """
-你是一个资深的代码安全分析专家。你的职责是深入分析漏洞代码，理解漏洞原理，并确定PoC开发的技术方案。
-
-你需要：
-1. 分析漏洞代码的具体实现
-2. 理解漏洞的触发条件和数据流
-3. 确定PoC开发的技术路线
-4. 识别需要模拟的依赖和环境
-
-输出详细的技术分析报告，为后续的代码开发提供指导。
-"""
-        tools_prompt = f"""
-可用工具:
-{chr(10).join([f"- {tool.name}: {tool.description}" for tool in tools])}
-
-请使用这些工具来读取和分析相关代码文件。
-"""
-        super().__init__("AnalysisAgent", model, tools, system_prompt, tools_prompt)
-
-
-class CodingAgent(SubAgent):
-    """编码阶段代理 - 生成PoC代码"""
-
-    def __init__(self, model: ChatOpenAI | OpenAI, tools: List[BaseTool]):
-        system_prompt = """
-你是一个专业的PoC代码开发工程师。你的职责是根据漏洞分析结果，生成可独立运行的PoC验证代码。
-
-你需要：
-1. 根据分析结果编写完整的PoC代码
-2. 确保代码可以独立编译和运行
-3. 包含清晰的注释和关键节点标记
-4. 实现有效的漏洞触发和验证逻辑
-
-生成的代码应该：
-- 完整可运行
-- 包含必要的依赖模拟
-- 有明显的验证效果
-- 包含安全的使用说明
-"""
-        tools_prompt = f"""
-可用工具:
-{chr(10).join([f"- {tool.name}: {tool.description}" for tool in tools])}
-
-请使用这些工具来创建和管理代码文件。
-"""
-        super().__init__("CodingAgent", model, tools, system_prompt, tools_prompt)
-
-
-class TestingAgent(SubAgent):
-    """测试阶段代理 - 验证PoC效果"""
-
-    def __init__(self, model: ChatOpenAI | OpenAI, tools: List[BaseTool]):
-        system_prompt = """
-你是一个专业的PoC测试验证工程师。你的职责是测试生成的PoC代码，验证其正确性和有效性。
-
-你需要：
-1. 检查代码的语法正确性
-2. 验证代码的可编译性
-3. 测试PoC的执行效果
-4. 确认漏洞是否被成功触发
-5. 提供测试结果和改进建议
-
-如果发现问题，请详细报告并提供修复建议。
-"""
-        tools_prompt = f"""
-可用工具:
-{chr(10).join([f"- {tool.name}: {tool.description}" for tool in tools])}
-
-请使用这些工具来编译、运行和测试代码。
-"""
-        super().__init__("TestingAgent", model, tools, system_prompt, tools_prompt)
-
-
-class DocumentationAgent(SubAgent):
-    """文档阶段代理 - 生成完整报告"""
-
-    def __init__(self, model: ChatOpenAI | OpenAI, tools: List[BaseTool]):
-        system_prompt = """
-你是一个专业的安全文档编写专家。你的职责是根据所有阶段的结果，生成完整、专业的漏洞验证报告。
-
-你需要：
-1. 整合所有阶段的分析和测试结果
-2. 编写详细的漏洞分析报告
-3. 包含PoC使用说明和安全建议
-4. 确保报告的完整性和专业性
-
-生成的报告应该包含：
-- 漏洞概述和影响分析
-- 技术分析详情
-- PoC代码和使用说明
-- 测试结果和验证效果
-- 修复建议和防护措施
-"""
-        tools_prompt = f"""
-可用工具:
-{chr(10).join([f"- {tool.name}: {tool.description}" for tool in tools])}
-
-请使用这些工具来读取文件信息并生成报告文档。
-"""
-        super().__init__("DocumentationAgent", model, tools, system_prompt, tools_prompt)
-
-
-class PoCGenDeepAgent:
-    """
-    基于DeepAgent理念的PoC生成代理
-
-    核心特点:
-    1. 任务分解: 将复杂任务分解为多个专业化子任务
-    2. 专业化代理: 每个子任务由专门优化的代理处理
-    3. 上下文保持: 通过TaskContext保持各阶段间的上下文信息
-    4. 渐进式执行: 按阶段顺序执行，每阶段结果为下一阶段提供输入
-    """
-
-    def __init__(self, model: Optional[ChatOpenAI | OpenAI] = None):
-        self.model = model or get_llm_client()
-        self.chat_history: List = []
-
-        # 初始化各个专业化代理
-        self.planning_agent = PlanningAgent(self.model, POC_AGENT_TOOLS)
-        self.analysis_agent = AnalysisAgent(self.model, POC_AGENT_TOOLS)
-        self.coding_agent = CodingAgent(self.model, POC_AGENT_TOOLS)
-        self.testing_agent = TestingAgent(self.model, POC_AGENT_TOOLS)
-        self.documentation_agent = DocumentationAgent(self.model, POC_AGENT_TOOLS)
-
-    def _create_working_directory(self, poc_path: str) -> str:
-        """创建工作目录"""
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        working_dir = os.path.join(poc_path, f"deepagent_{timestamp}")
-        os.makedirs(working_dir, exist_ok=True)
-        return working_dir
-
-    async def _execute_stage(self, agent: SubAgent, context: TaskContext,
-                           task_description: str) -> str:
-        """执行单个阶段"""
-        log.info(f"开始执行阶段: {agent.name}")
+        # 组装prompt
+        formatted_prompt = self.user_prompt.invoke(message.model_dump())
 
         # 添加用户消息到历史记录
-        self.chat_history.append(HumanMessage(
-            content=f"[{agent.name}] {task_description}"
-        ))
+        self.chat_history.append(HumanMessage(content=str(formatted_prompt)))
 
-        # 执行代理任务
-        result = await agent.execute(context.to_dict(), task_description)
+        # 异步调用Agent
+        response = await self.agent.ainvoke({
+            "messages": [{"role": "user", "content": str(formatted_prompt)}]
+        })
+
+        # 提取回复内容
+        ai_message = response["messages"][-1]
+        reply = ai_message.content
 
         # 添加AI回复到历史记录
-        self.chat_history.append(AIMessage(content=result))
+        self.chat_history.append(ai_message)
 
-        log.info(f"阶段 {agent.name} 执行完成")
-        return result
+        return reply
 
-    async def _planning_stage(self, context: TaskContext) -> str:
-        """规划阶段"""
-        task_description = """
-请根据提供的漏洞信息，制定详细的PoC生成计划。分析漏洞类型、影响范围、技术难点，
-并制定包含代码分析、PoC开发、测试验证、文档编写的完整执行计划。
-"""
-        return await self._execute_stage(self.planning_agent, context, task_description)
-
-    async def _analysis_stage(self, context: TaskContext) -> str:
-        """分析阶段"""
-        task_description = """
-请深入分析漏洞代码，理解漏洞的技术原理和触发机制。重点关注：
-1. 漏洞代码的具体实现逻辑
-2. 数据流和控制流分析
-3. 漏洞触发的必要条件
-4. PoC开发需要模拟的环境和依赖
-"""
-        return await self._execute_stage(self.analysis_agent, context, task_description)
-
-    async def _coding_stage(self, context: TaskContext) -> str:
-        """编码阶段"""
-        task_description = """
-请根据前面的分析结果，生成完整可运行的PoC验证代码。要求：
-1. 代码必须可以独立编译和运行
-2. 包含必要的依赖类和函数模拟
-3. 实现有效的漏洞触发逻辑
-4. 包含清晰的注释和关键节点标记
-5. 提供明显的验证效果
-"""
-        return await self._execute_stage(self.coding_agent, context, task_description)
-
-    async def _testing_stage(self, context: TaskContext) -> str:
-        """测试阶段"""
-        task_description = """
-请测试生成的PoC代码，验证其正确性和有效性。包括：
-1. 检查代码语法正确性
-2. 验证代码可编译性
-3. 测试PoC执行效果
-4. 确认漏洞是否被成功触发
-5. 提供详细的测试结果
-"""
-        return await self._execute_stage(self.testing_agent, context, task_description)
-
-    async def _documentation_stage(self, context: TaskContext) -> str:
-        """文档阶段"""
-        task_description = """
-请根据所有阶段的执行结果，生成完整的漏洞验证报告。报告应包含：
-1. 漏洞概述和技术分析
-2. PoC代码说明和使用指南
-3. 测试结果和验证效果
-4. 安全建议和修复方案
-5. 完整的执行过程记录
-"""
-        return await self._execute_stage(self.documentation_agent, context, task_description)
-
-    async def generate_poc(self, vulnerability_info: ToDoListResult) -> PocResult:
-        """
-        执行完整的PoC生成流程
-
-        Args:
-            vulnerability_info: 漏洞信息
-
-        Returns:
-            PocResult: 包含完整执行过程和结果的PoC结果
-        """
-        log.info("开始DeepAgent PoC生成流程")
-
-        try:
-            # 创建工作目录
-            working_dir = self._create_working_directory(vulnerability_info.poc_path)
-
-            # 初始化任务上下文
-            context = TaskContext(
-                stage=TaskStage.PLANNING,
-                vulnerability_info=vulnerability_info,
-                working_directory=working_dir,
-                generated_files=[]
-            )
-
-            execution_log = []
-
-            # 执行各个阶段
-            stages = [
-                (TaskStage.PLANNING, self._planning_stage),
-                (TaskStage.ANALYSIS, self._analysis_stage),
-                (TaskStage.CODING, self._coding_stage),
-                (TaskStage.TESTING, self._testing_stage),
-                (TaskStage.DOCUMENTATION, self._documentation_stage)
-            ]
-
-            for stage, stage_func in stages:
-                context.stage = stage
-                result = await stage_func(context)
-
-                # 更新上下文
-                if stage == TaskStage.PLANNING:
-                    # 规划阶段结果不直接存储，但可以解析出任务列表
-                    pass
-                elif stage == TaskStage.ANALYSIS:
-                    context.analysis_result = result
-                elif stage == TaskStage.CODING:
-                    context.code_result = result
-                elif stage == TaskStage.TESTING:
-                    context.test_result = result
-                elif stage == TaskStage.DOCUMENTATION:
-                    context.doc_result = result
-
-                execution_log.append(f"=== {stage.value.upper()} 阶段 ===\n{result}\n")
-
-            # 生成最终结果
-            final_result = f"""
-DeepAgent PoC生成执行报告
-
-工作目录: {working_dir}
-执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-{'='*60}
-{chr(10).join(execution_log)}
-{'='*60}
-
-生成的文件:
-{chr(10).join([f"- {f}" for f in context.generated_files]) if context.generated_files else "无"}
-
-执行状态: 成功完成
-"""
-
-            log.info("DeepAgent PoC生成流程完成")
-            return PocResult(result=final_result)
-
-        except Exception as e:
-            error_msg = f"DeepAgent执行过程中发生错误: {str(e)}"
-            log.error(error_msg)
-            return PocResult(result=error_msg)
+    async def stream_multiple_achat(self, message: ToDoListResult):
+        formatted_prompt = self.user_prompt.invoke(message.model_dump())
+        self.chat_history.append(HumanMessage(content=str(formatted_prompt)))
+        for stream_mode, chunk in self.agent.stream(
+                {"messages": [{"role": "user", "content": str(formatted_prompt)}]},
+                stream_mode=["updates", "custom"],
+                # stream_mode=["messages", "updates", "custom"]
+        ):
+            log.info(f"stream_mode: {stream_mode}")
+            log.info(f"content: {chunk}")
+            log.info("\n")
 
 
-# 使用示例
-async def main():
-    """主函数示例"""
-    import os
+async def run_vulnerability_analysis(code_repo, vuln_type, description, filename, code, impact, result, todolist, mode="stream_multiple"):
+    """统一的漏洞分析函数
 
-    # 生成时间戳路径
+    Args:
+        code_repo: 代码仓库路径
+        vuln_type: 漏洞类型
+        description: 漏洞描述
+        filename: 文件名
+        code: 代码片段
+        impact: 漏洞影响
+        result: 分析结果
+        todolist: 待办事项列表
+        mode: 分析模式，可选 "achat", "stream_multiple"
+    """
+    # 创建时间戳路径和POC目录：年月日-时分秒
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    poc_path = os.path.join("./poc", timestamp)
+    poc_path = os.path.join(os.getcwd(), "poc", timestamp)
 
     # 确保目录存在
     os.makedirs(poc_path, exist_ok=True)
 
-    # 测试数据 - 格式化字符串漏洞示例
+    vuln_result = VulnResult(
+        code_repo=code_repo,
+        poc_path=poc_path,
+        type=vuln_type,
+        description=description,
+        filename=filename,
+        code=code.strip(),
+        impact=impact,
+        result=result.strip()
+    )
+
+    # 初始化模型和代理
+    model = get_llm_client(stream_usage=True)
+    model.with_structured_output(PocResult)
+
+    agent = PocGenDeepAgent(search_file_path=code_repo, model=model)
+
+    # 执行代理分析
+    if mode == "achat":
+        # response = await agent.achat(todo_list_result)
+        response = await agent.achat(vuln_result)
+        return response
+    elif mode == "stream_multiple":
+        # await agent.stream_multiple_achat(todo_list_result)
+        await agent.stream_multiple_achat(vuln_result)
+    else:
+        raise ValueError(f"不支持的模式: {mode}")
+
+
+# 使用示例
+async def main():
+    # 生成时间戳路径：年月日-时分秒
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    poc_path = os.path.join(os.getcwd(), "poc", timestamp)
+
+    # 确保目录存在
+    os.makedirs(poc_path, exist_ok=True)
+
+    # 测试结果
     vuln_result = ToDoListResult(
-        todolist="基于DeepAgent方法生成格式化字符串漏洞的PoC验证代码",
+        todolist="好的，我将根据您提供的漏洞信息，进入规划阶段，为您生成一份详细的 ToDoList，以指导后续的 PoC 代码编写工作。\n\n```xml\n<ToDoList>\n    <project_name>FORMAT_STRING_VULNERABILITY_PoC</project_name>\n    <description>针对 BlobLogRowWriter::log_debug_firewall 函数中格式化字符串漏洞的验证代码生成计划。</description>\n    \n    <steps>\n        <step id=\"1\">\n            <title>项目环境与结构搭建</title>\n            <description>创建 PoC 项目所需的目录、文件和基础配置，确保项目结构清晰、可独立编译和运行。</description>\n            <details>\n                <item>1.1. 在指定输出路径 `./poc/20251127-120357` 下创建项目根目录。</item>\n                <item>1.2. 创建主源码文件 `poc.cpp`。</item>\n                <item>1.3. 创建 `Makefile` 用于定义编译规则。</item>\n                <item>1.4. 创建编译脚本 `build.sh`，内容为执行 `make` 命令。</item>\n                <item>1.5. 创建 `README.md` 文档，用于说明 PoC 的功能、编译、运行方法及预期结果。</item>\n            </details>\n        </step>\n\n        <step id=\"2\">\n            <title>定义核心数据结构</title>\n            <description>根据漏洞分析报告，定义并实现 PoC 所需的最小化数据结构，模拟漏洞触发环境。</description>\n            <details>\n                <item>2.1. 在 `poc.cpp` 中，定义 `union nf_inet_addr` 结构体，用于模拟 IP 地址。内部可包含一个 `struct in_addr ip;`。</item>\n                <item>2.2. 定义 `action` 结构体，包含 `char in_ifname[IFNAMSIZ];` 字段（`IFNAMSIZ` 通常为16，可根据实际情况调整，确保能容纳测试payload）和 `union nf_inet_addr nHstIp, nDstIp;`。</item>\n                <item>2.3. 定义 `FIREWALL` 结构体，包含 `char szDepict[256];` 和 `struct action action;` 字段。数组大小需足够大以容纳恶意payload。</item>\n            </details>\n        </step>\n\n        <step id=\"3\">\n            <title>模拟辅助函数</title>\n            <description>实现漏洞函数调用链中依赖的辅助函数，确保 PoC 的完整性和可编译性。</description>\n            <details>\n                <item>3.1. 实现 `SyslogGetAddr` 函数。该函数接收 `union nf_inet_addr*` 和 `unsigned int order` 参数，返回一个静态的 IP 地址字符串，如 `\"192.168.1.1\"`。此函数非漏洞点，简化实现即可。</item>\n                <item>3.2. 实现 `tsklog_dp_debug` 函数。此函数是**漏洞触发点**。它应接收一个格式化字符串和可变参数，并直接调用 `vprintf` 或 `printf` 将其输出到标准错误或标准输出。**关键：不能对格式化字符串进行任何处理。**</item>\n            </details>\n        </step>\n\n        <step id=\"4\">\n            <title>实现漏洞函数逻辑</title>\n            <description>精确复现漏洞函数 `BlobLogRowWriter::log_debug_firewall` 的核心逻辑，完成污点数据的传播。</description>\n            <details>\n                <item>4.1. 在 `poc.cpp` 中，创建 `BlobLogRowWriter` 类（或直接使用命名空间），并实现 `log_debug_firewall(FIREWALL *pkt)` 方法。</item>\n                <item>4.2. 在该方法内部，**标记污点传播**：直接使用 `pkt->szDepict` 和 `pkt->action.in_ifname` 作为参数。</item>\n                <item>4.3. 调用 `tsklog_dp_debug` 函数，并传入包含 `%s` 占位符的格式化字符串以及 `pkt` 中的污点数据，完整复现危险函数调用。例如：`tsklog_dp_debug(\"应用控制日志 ==> szDepict:%s, in_ifname:%s, src_ip:%s, dst_ip:%s\", pkt->szt->action.nHstIp), 0), SyslogGetAddr(&(pkt->action.nDstIp), 1));`</item>\n            </details>\n        </step>\n\n        <step id=\"5\">\n            <title>构造主函数与数据流入口</title>\n            <description>在 `main` 函数中构造恶意输入，模拟外部数据源，并调用漏洞函数，形成完整的数据流。</description>\n            <details>\n                <item>5.1. 在 `main` 函数中，实例化一个 `FIREWALL` 结构体变量 `pkt`。</item>\n                <item>5.2. **标记数据流入口**：使用 `strcpy` 或 `sprintf` 将恶意的格式化字符串 payload 写入 `pkt.szDepict` 和 `pkt.action.in_ifname`。Payload 应设计为能泄露栈上信息，例如 `\"%p %p %p %p\"` 或 `\"%x.%x.%x.%x\"`。</item>\n                <item>5.3. 调用 `log_debug_firewall(&pkt)`，触发漏洞。</item>\n                <item>5.4. 在 `main` 函数中添加打印信息，说明 PoC 的目的和正在执行的操作。</item>\n            </details>\n        </step>\n\n        <step id=\"6\">\n            <title>完善编译与文档</title>\n            <description>配置编译选项，并完善 README 文档，确保 PoC 易于使用和验证。</description>\n            <details>\n                <item>6.1. 编写 `Makefile`，设置编译器（如 `g++`），添加编译标志（如 `-g` 用于调试，`-Wall` 显示所有警告），并指定生成可执行文件（如 `poc`）。</item>\n                <item>6.2. 编写 `README.md`，内容包括：\n                    - 漏洞简介。\n                    - PoC 文件结构说明。\n                    - 编译命令 (`./build.sh` 或 `make`)。\n                    - 运行命令 (`./poc`)。\n                    - **预期结果**：明确指出成功运行后，控制台将打印出多个十六进制的内存地址，证明格式化字符串漏洞被成功利用，泄露了栈信息。</item>\n            </details>\n        </step>\n    </steps>\n</ToDoList>\n```\n",
         code_repo="/codesec/AF8048/AF8.0.48",
         poc_path=poc_path,
         type="FORMAT_STRING_VULNERABILITY",
-        description="在第1015行，ADD_ERR_MSG函数的第二个参数直接使用了来自用户输入的字符串(*it).c_str()，该字符串可能包含格式化说明符(如%s、%n等)，导致格式化字符串漏洞。",
-        filename="webui/cgi/server/tamper_admin/tamperAdminView.cpp",
+        description="在第1896行，使用strcpy函数将r.eth的内容复制到固定大小的if_name数组中，而r.eth是从外部输入获取的（第1830行），如果r.eth的长度超过24字节（包括终止符），就会导致缓冲区溢出。",
+        filename="af/datacenter/daemon/fwlog/BlobLogRowWriter.cpp",
         code="""
-1011 |+ 	for (vector<string>::iterator it = names.begin(); it != names.end(); it++) {
-1012 |+ 		string out_name;
-1013 |+ 		ret = CheckDeleteDepend(*it, out_name);
-1014 |+ 		if (ret) {
-1015 |+ 			ADD_ERR_MSG(ID2STR("IDS_ERR_DELETE_DEPEND"), (*it).c_str());
-1016 |+ 			ShowErrMsg();
+2883 |          "test_d:%s,"
+2912 |          "session_start_time:%s",
+2922 |          pkt->szDepict,
+2939 |          pkt->action.in_ifname,
+2944 |+         SyslogGetAddr(&(pkt->action.nHstIp), 0),
+2945 |+         SyslogGetAddr(&(pkt->action.nDstIp), 1));
         """.strip(),
-        impact="攻击者可以通过构造包含格式化说明符的输入，导致程序读取或写入任意内存地址，可能造成敏感信息泄露或拒绝服务攻击。",
-        result="安全漏洞分析报告..."  # 简化的结果字符串
+        impact="攻击者可通过构造恶意输入注入格式化字符串指令（如%n），导致内存写入或信息泄露，进而可能实现任意代码执行或敏感数据窃取。",
+        result="""
+# 安全漏洞分析报告
+
+## 1. 安全漏洞存在性
+**存在**：存在格式化字符串漏洞，函数`BlobLogRowWriter::log_debug_firewall`中的`pkt->szDepict`、`pkt->action.in_ifname`参数未过滤`%`字符，可能导致格式化字符串攻击。
+
+## 2. 漏洞利用条件及触发方式
+- **利用条件**：
+  - 攻击者需能控制`pkt->szDepict`和`pkt->action.in_ifname`的值（如通过构造恶意网络数据包）
+  - 需要`tsklog_DBG1`实现直接使用格式字符串（如`vprintf`）
+- **触发方式**：
+  构造包含`%n`的字符串作为`szDepict`或`in_ifname`值，触发内存写入或信息泄露
+
+## 3. 数据流分析
+```mermaid
+graph TD
+    A["用户构造恶意输入"] --> |网络数据包 szDepict/in_ifname| B["pkt结构体赋值"]
+    B --> |未过滤参数| C["BlobLogRowWriter::log_debug_firewall"]
+    C --> |格式化字符串参数| D["tsklog_dp_debug"]
+    D --> |潜在格式化处理| E["内存写入/信息泄露"]
+```
+
+## 4. 关键代码片段
+
+**危险函数调用**：
+```cpp
+// af/datacenter/daemon/fwlog/BlobLogRowWriter.cpp
+void BlobLogRowWriter::log_debug_firewall(FIREWALL *pkt) {
+    tsklog_dp_debug("应用控制日志 ==> szDepict:%s, in_ifname:%s, ...", 
+        pkt->szDepict, pkt->action.in_ifname, ...);
+}
+```
+
+**用户输入来源**：
+```cpp
+// af/datacenter/daemon/fwlog/BlobLogRowWriter.cpp
+APPEND_STR_VALUE(FIREWALL_DEPICT, pkt->szDepict, strlen(pkt->szDepict));
+APPEND_STR_VALUE(FIREWALL_IN_IFNAME, pkt->action.in_ifname, strlen(pkt->action.in_ifname));
+```
+
+**SyslogGetAddr实现**：
+```cpp
+// af/datacenter/daemon/fwlog/BlobLogRowWriter.cpp
+char *BlobLogRowWriter::SyslogGetAddr(union nf_inet_addr* ip, unsigned int order) {
+    // IP地址转换为字符串，通常不包含%字符
+    return inet_ntoa(ip->ip);
+}
+```
+
+## 5. 总结
+**漏洞类型**：格式化字符串漏洞  
+**修复建议**：
+1. 对`szDepict`和`in_ifname`进行过滤，移除`%`字符：
+   ```cpp
+   std::string sanitize(const std::string& input) {
+       std::string result;
+       for (char c : input) {
+           if (c != '%') result += c;
+       }
+       return result;
+   }
+   ```
+2. 使用安全的日志函数（如`snprintf`）替代`tsklog_dp_debug`：
+   ```cpp
+   char buffer[1024];
+   snprintf(buffer, sizeof(buffer), "日志模板: %s", sanitized_input.c_str());
+   tsklog_dp_debug("%s", buffer);
+   ```
+3. 对`tsklog_DBG1`实现进行审查，确保其使用固定格式字符串而非用户输入。
+        """.strip()
     )
+    # 使用抽象层自动选择客户端
+    model = get_llm_client(stream_usage=True)
+    model.with_structured_output(PocResult)
 
-    # 使用DeepAgent生成PoC
-    deep_agent = PoCGenDeepAgent()
+    agent = PocGenDeepAgent(search_file_path=vuln_result.code_repo, model=model)
 
-    try:
-        result = await deep_agent.generate_poc(vuln_result)
-        log.info(f"DeepAgent执行结果:\n{result.result}")
+    # log.info(f"vuln_result: {vuln_result}")
+    # response = await agent.achat(vuln_result)
+    # log.info(f"res: {response}")
 
-    except Exception as e:
-        log.error(f"DeepAgent执行失败: {str(e)}")
+    await agent.stream_multiple_achat(vuln_result)
+
+
+async def format_string_poc_main():
+    """格式化字符串漏洞PoC生成示例"""
+    log.info(f"Start format_string_poc_main ...")
+
+    # 使用统一函数运行格式化字符串漏洞PoC生成
+    await run_vulnerability_analysis(
+        code_repo="/codesec/AF8048/AF8.0.48",
+        vuln_type="FORMAT_STRING_VULNERABILITY",
+        description="在第1896行，使用strcpy函数将r.eth的内容复制到固定大小的if_name数组中，而r.eth是从外部输入获取的（第1830行），如果r.eth的长度超过24字节（包括终止符），就会导致缓冲区溢出。",
+        filename="af/datacenter/daemon/fwlog/BlobLogRowWriter.cpp",
+        code="""
+2883 |         "test_d:%s,"
+2912 |         "session_start_time:%s",
+2922 |         pkt->szDepict,
+2939 |         pkt->action.in_ifname,
+2944 |+         SyslogGetAddr(&(pkt->action.nHstIp), 0),
+2945 |+         SyslogGetAddr(&(pkt->action.nDstIp), 1));
+        """.strip(),
+        impact="攻击者可通过构造恶意输入注入格式化字符串指令（如%n），导致内存写入或信息泄露，进而可能实现任意代码执行或敏感数据窃取。",
+        result="""
+# 安全漏洞分析报告
+
+## 1. 安全漏洞存在性
+**存在**：存在格式化字符串漏洞，函数`BlobLogRowWriter::log_debug_firewall`中的`pkt->szDepict`、`pkt->action.in_ifname`参数未过滤`%`字符，可能导致格式化字符串攻击。
+
+## 2. 漏洞利用条件及触发方式
+- **利用条件**：
+  - 攻击者需能控制`pkt->szDepict`和`pkt->action.in_ifname`的值（如通过构造恶意网络数据包）
+  - 需要`tsklog_DBG1`实现直接使用格式字符串（如`vprintf`）
+- **触发方式**：
+  构造包含`%n`的字符串作为`szDepict`或`in_ifname`值，触发内存写入或信息泄露
+
+## 3. 数据流分析
+```mermaid
+graph TD
+    A["用户构造恶意输入"] --> |网络数据包 szDepict/in_ifname| B["pkt结构体赋值"]
+    B --> |未过滤参数| C["BlobLogRowWriter::log_debug_firewall"]
+    C --> |格式化字符串参数| D["tsklog_dp_debug"]
+    D --> |潜在格式化处理| E["内存写入/信息泄露"]
+```
+
+## 4. 关键代码片段
+
+**危险函数调用**：
+```cpp
+// af/datacenter/daemon/fwlog/BlobLogRowWriter.cpp
+void BlobLogRowWriter::log_debug_firewall(FIREWALL *pkt) {
+    tsklog_dp_debug("应用控制日志 ==> szDepict:%s, in_ifname:%s, ...",
+        pkt->szDepict, pkt->action.in_ifname, ...);
+}
+```
+
+**用户输入来源**：
+```cpp
+// af/datacenter/daemon/fwlog/BlobLogRowWriter.cpp
+APPEND_STR_VALUE(FIREWALL_DEPICT, pkt->szDepict, strlen(pkt->szDepict));
+APPEND_STR_VALUE(FIREWALL_IN_IFNAME, pkt->action.in_ifname, strlen(pkt->action.in_ifname));
+```
+
+**SyslogGetAddr实现**：
+```cpp
+// af/datacenter/daemon/fwlog/BlobLogRowWriter.cpp
+char *BlobLogRowWriter::SyslogGetAddr(union nf_inet_addr* ip, unsigned int order) {
+    // IP地址转换为字符串，通常不包含%字符
+    return inet_ntoa(ip->ip);
+}
+```
+
+## 5. 总结
+**漏洞类型**：格式化字符串漏洞
+**修复建议**：
+1. 对`szDepict`和`in_ifname`进行过滤，移除`%`字符：
+   ```cpp
+   std::string sanitize(const std::string& input) {
+       std::string result;
+       for (char c : input) {
+           if (c != '%') result += c;
+       }
+       return result;
+   }
+   ```
+2. 使用安全的日志函数（如`snprintf`）替代`tsklog_dp_debug`：
+   ```cpp
+   char buffer[1024];
+   snprintf(buffer, sizeof(buffer), "日志模板: %s", sanitized_input.c_str());
+   tsklog_dp_debug("%s", buffer);
+   ```
+3. 对`tsklog_DBG1`实现进行审查，确保其使用固定格式字符串而非用户输入。
+        """.strip(),
+        todolist="""
+好的，我将根据您提供的漏洞信息，进入规划阶段，为您生成一份详细的 ToDoList，以指导后续的 PoC 代码编写工作。
+
+```xml
+<ToDoList>
+    <project_name>FORMAT_STRING_VULNERABILITY_PoC</project_name>
+    <description>针对 BlobLogRowWriter::log_debug_firewall 函数中格式化字符串漏洞的验证代码生成计划。</description>
+    
+    <steps>
+        <step id="1">
+            <title>项目环境与结构搭建</title>
+            <description>创建 PoC 项目所需的目录、文件和基础配置，确保项目结构清晰、可独立编译和运行。</description>
+            <details>
+                <item>1.1. 在指定输出路径 `./poc/20251127-120357` 下创建项目根目录。</item>
+                <item>1.2. 创建主源码文件 `poc.cpp`。</item>
+                <item>1.3. 创建 `Makefile` 用于定义编译规则。</item>
+                <item>1.4. 创建编译脚本 `build.sh`，内容为执行 `make` 命令。</item>
+                <item>1.5. 创建 `README.md` 文档，用于说明 PoC 的功能、编译、运行方法及预期结果。</item>
+            </details>
+        </step>
+
+        <step id="2">
+            <title>定义核心数据结构</title>
+            <description>根据漏洞分析报告，定义并实现 PoC 所需的最小化数据结构，模拟漏洞触发环境。</description>
+            <details>
+                <item>2.1. 在 `poc.cpp` 中，定义 `union nf_inet_addr` 结构体，用于模拟 IP 地址。内部可包含一个 `struct in_addr ip;`。</item>
+                <item>2.2. 定义 `action` 结构体，包含 `char in_ifname[IFNAMSIZ];` 字段（`IFNAMSIZ` 通常为16，可根据实际情况调整，确保能容纳测试payload）和 `union nf_inet_addr nHstIp, nDstIp;`。</item>
+                <item>2.3. 定义 `FIREWALL` 结构体，包含 `char szDepict[256];` 和 `struct action action;` 字段。数组大小需足够大以容纳恶意payload。</item>
+            </details>
+        </step>
+
+        <step id="3">
+            <title>模拟辅助函数</title>
+            <description>实现漏洞函数调用链中依赖的辅助函数，确保 PoC 的完整性和可编译性。</description>
+            <details>
+                <item>3.1. 实现 `SyslogGetAddr` 函数。该函数接收 `union nf_inet_addr*` 和 `unsigned int order` 参数，返回一个静态的 IP 地址字符串，如 `"192.168.1.1"`。此函数非漏洞点，简化实现即可。</item>
+                <item>3.2. 实现 `tsklog_dp_debug` 函数。此函数是**漏洞触发点**。它应接收一个格式化字符串和可变参数，并直接调用 `vprintf` 或 `printf` 将其输出到标准错误或标准输出。**关键：不能对格式化字符串进行任何处理。**</item>
+            </details>
+        </step>
+
+        <step id="4">
+            <title>实现漏洞函数逻辑</title>
+            <description>精确复现漏洞函数 `BlobLogRowWriter::log_debug_firewall` 的核心逻辑，完成污点数据的传播。</description>
+            <details>
+                <item>4.1. 在 `poc.cpp` 中，创建 `BlobLogRowWriter` 类（或直接使用命名空间），并实现 `log_debug_firewall(FIREWALL *pkt)` 方法。</item>
+                <item>4.2. 在该方法内部，**标记污点传播**：直接使用 `pkt->szDepict` 和 `pkt->action.in_ifname` 作为参数。</item>
+                <item>4.3. 调用 `tsklog_dp_debug` 函数，并传入包含 `%s` 占位符的格式化字符串以及 `pkt` 中的污点数据，完整复现危险函数调用。例如：`tsklog_dp_debug("应用控制日志 ==> szDepict:%s, in_ifname:%s, src_ip:%s, dst_ip:%s", pkt->szt->action.nHstIp), 0), SyslogGetAddr(&(pkt->action.nDstIp), 1));`</item>
+            </details>
+        </step>
+
+        <step id="5">
+            <title>构造主函数与数据流入口</title>
+            <description>在 `main` 函数中构造恶意输入，模拟外部数据源，并调用漏洞函数，形成完整的数据流。</description>
+            <details>
+                <item>5.1. 在 `main` 函数中，实例化一个 `FIREWALL` 结构体变量 `pkt`。</item>
+                <item>5.2. **标记数据流入口**：使用 `strcpy` 或 `sprintf` 将恶意的格式化字符串 payload 写入 `pkt.szDepict` 和 `pkt.action.in_ifname`。Payload 应设计为能泄露栈上信息，例如 `"%p %p %p %p"` 或 `"%x.%x.%x.%x"`。</item>
+                <item>5.3. 调用 `log_debug_firewall(&pkt)`，触发漏洞。</item>
+                <item>5.4. 在 `main` 函数中添加打印信息，说明 PoC 的目的和正在执行的操作。</item>
+            </details>
+        </step>
+
+        <step id="6">
+            <title>完善编译与文档</title>
+            <description>配置编译选项，并完善 README 文档，确保 PoC 易于使用和验证。</description>
+            <details>
+                <item>6.1. 编写 `Makefile`，设置编译器（如 `g++`），添加编译标志（如 `-g` 用于调试，`-Wall` 显示所有警告），并指定生成可执行文件（如 `poc`）。</item>
+                <item>6.2. 编写 `README.md`，内容包括：
+                    - 漏洞简介。
+                    - PoC 文件结构说明。
+                    - 编译命令 (`./build.sh` 或 `make`)。
+                    - 运行命令 (`./poc`)。
+                    - **预期结果**：明确指出成功运行后，控制台将打印出多个十六进制的内存地址，证明格式化字符串漏洞被成功利用，泄露了栈信息。</item>
+            </details>
+        </step>
+    </steps>
+</ToDoList>
+```
+        """.strip()
+    )
 
 
 if __name__ == "__main__":
-    log.info("启动PoC生成DeepAgent...")
+    log.info(f"Start...")
     asyncio.run(main())

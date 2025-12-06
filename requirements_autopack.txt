@@ -1,0 +1,11 @@
+# 自动打包智能体所需依赖
+
+# 核心依赖
+docker>=6.0.0
+pydantic>=2.0.0
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langgraph>=0.0.30
+
+# 其他依赖
+pathlib2>=2.3.7; python_version < "3.4"

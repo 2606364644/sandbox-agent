@@ -1,7 +1,8 @@
 from typing import Optional
 
 from langchain.chat_models import init_chat_model
-from langchain_openai import ChatOpenAI, OpenAI
+# from langchain_openai import ChatOpenAI, OpenAI
+from langchain_community.chat_models import ChatZhipuAI
 
 from src.clients.base_client import BaseLLMProvider
 from src.utils.logger import log
@@ -29,12 +30,12 @@ class OpenAIProvider(BaseLLMProvider):
             return False
         return True
 
-    def create_client(self, stream_usage: bool = None) -> ChatOpenAI:
+    def create_client(self, **kwargs) -> ChatZhipuAI:
         if not self.validate_config():
             raise ValueError("模型配置验证失败")
 
         log.info(f"初始化模型客户端，模型: {self.model}, API Base: {self.api_base}")
-        return ChatOpenAI(
+        return ChatZhipuAI(
             model=self.model,
             api_key=self.api_key,
             base_url=self.api_base,
@@ -43,5 +44,19 @@ class OpenAIProvider(BaseLLMProvider):
             timeout=self.timeout,
             max_retries=settings.LLM_MAX_RETRIES,
             use_responses_api=settings.THINK,  # 从配置读取思考功能
-            stream_usage=stream_usage
+            stream_usage=kwargs.get('api_key', None)
         )
+
+
+if __name__ == "__main__":
+    log.info(f"Start...")
+    model = OpenAIProvider().create_client()
+    messages = [
+        (
+            "system",
+            "You are a helpful assistant that translates English to French. Translate the user sentence.",
+        ),
+        ("human", "I love programming."),
+    ]
+    ai_msg = model.invoke(messages)
+    print(ai_msg.text)

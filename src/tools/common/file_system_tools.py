@@ -26,96 +26,99 @@ def list_files_core(directory: str, recursive: bool = False, max_files: int = 20
         格式化的文件列表字符串
     """
     try:
-        # 处理路径
-        path = Path(directory)
-        if not path.is_absolute():
-            path = Path.cwd() / path
+        # 1. 路径处理和验证
+        path = _normalize_path(directory)
+        if not path or not path.is_dir():
+            return f"错误: 目录不存在或不是有效目录 - {directory}"
 
-        # 检查目录是否存在
-        if not path.exists():
-            return f"错误: 目录不存在 - {directory}"
+        # 2. 获取文件和目录列表
+        items = _get_directory_items(path, recursive)
+        if isinstance(items, str):  # 返回的是错误信息
+            return items
 
-        if not path.is_dir():
-            return f"错误: 路径不是目录 - {directory}"
+        # 3. 处理文件信息
+        files, dirs = _process_items(path, items, recursive, max_files)
 
-        # 收集文件和目录
-        files = []
-        dirs = []
-
-        if recursive:
-            # 递归遍历
-            pattern = "**/*"
-            try:
-                for item in path.glob(pattern):
-                    if item.is_file():
-                        relative_path = item.relative_to(path)
-                        files.append(str(relative_path))
-                    elif item.is_dir() and item != path:  # 不包含根目录本身
-                        relative_path = item.relative_to(path)
-                        dirs.append(str(relative_path))
-            except PermissionError as e:
-                return f"错误: 没有权限访问目录 - {str(e)}"
-        else:
-            # 只列出当前目录
-            try:
-                for item in path.iterdir():
-                    if item.is_file():
-                        files.append(item.name)
-                    elif item.is_dir():
-                        dirs.append(item.name)
-            except PermissionError as e:
-                return f"错误: 没有权限访问目录 - {str(e)}"
-
-        # 排序
-        files.sort()
-        dirs.sort()
-
-        # 检查是否达到限制
-        total_items = len(files) + len(dirs)
-        if total_items > max_files:
-            files = files[:max_files]
-            dirs = dirs[:max_files - len(files)]
-
-        # 格式化输出
-        result = f"目录: {path}\n"
-        result += f"总计: {total_items} 个项目"
-        if total_items > max_files:
-            result += f" (显示前 {max_files} 个)"
-        result += "\n"
-        result += "=" * 50 + "\n"
-
-        if dirs:
-            result += "📁 目录:\n"
-            for dir_name in dirs:
-                result += f"  {dir_name}/\n"
-            result += "\n"
-
-        if files:
-            result += "📄 文件:\n"
-            for file_name in files:
-                file_path = path / file_name
-                try:
-                    size = file_path.stat().st_size
-                    # 格式化文件大小
-                    if size < 1024:
-                        size_str = f"{size}B"
-                    elif size < 1024 * 1024:
-                        size_str = f"{size/1024:.1f}KB"
-                    else:
-                        size_str = f"{size/(1024*1024):.1f}MB"
-
-                    result += f"  {file_name} ({size_str})\n"
-                except:
-                    result += f"  {file_name}\n"
-
-        if not dirs and not files:
-            result += "目录为空\n"
-
-        return result
+        # 4. 格式化输出
+        return _format_directory_list(path, files, dirs, max_files)
 
     except Exception as e:
         logger.error(f"列出目录内容时出错: {str(e)}")
         return f"错误: 列出目录内容失败 - {str(e)}"
+
+
+def _normalize_path(directory: str) -> Path:
+    """标准化路径"""
+    return Path(directory) if Path(directory).is_absolute() else Path.cwd() / directory
+
+
+def _get_directory_items(path: Path, recursive: bool):
+    """获取目录项目列表"""
+    try:
+        return list(path.rglob("*")) if recursive else list(path.iterdir())
+    except PermissionError:
+        return f"错误: 没有权限访问目录 - {path}"
+
+
+def _process_items(base_path: Path, items: list, recursive: bool, max_files: int):
+    """处理文件和目录项目"""
+    files, dirs = [], []
+
+    for item in items[:max_files]:
+        # 跳过根目录本身（递归模式下）
+        if recursive and item == base_path:
+            continue
+
+        try:
+            if item.is_file():
+                rel_path = item.relative_to(base_path) if recursive else item.name
+                size = _format_file_size(item.stat().st_size)
+                files.append(f"{rel_path} ({size})")
+            elif item.is_dir():
+                rel_path = item.relative_to(base_path) if recursive else item.name
+                dirs.append(f"{rel_path}/")
+        except (OSError, PermissionError, ValueError):
+            # 跳过无法访问的项目
+            continue
+
+    files.sort()
+    dirs.sort()
+    return files, dirs
+
+
+def _format_directory_list(path: Path, files: list, dirs: list, max_files: int) -> str:
+    """格式化目录列表输出"""
+    total_items = len(files) + len(dirs)
+
+    result_lines = [
+        f"目录: {path}",
+        f"总计: {total_items} 个项目",
+        "=" * 50
+    ]
+
+    if total_items >= max_files:
+        result_lines.insert(-1, f"(显示前 {max_files} 个)")
+
+    if dirs:
+        result_lines.extend(["目录:"] + [f"  {d}" for d in dirs])
+
+    if files:
+        result_lines.extend(["文件:"] + [f"  {f}" for f in files])
+
+    if not dirs and not files:
+        result_lines.append("目录为空")
+
+    return "\n".join(result_lines)
+
+
+def _format_file_size(size_bytes: int) -> str:
+    """格式化文件大小"""
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes/1024:.1f}KB"
+    else:
+        return f"{size_bytes/(1024*1024):.1f}MB"
 
 
 def write_to_file_core(file_path: str, content: str, create_dirs: bool = True) -> str:
